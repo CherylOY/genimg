@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Datasets downloaded by MNIST(download=True)
+datasets/
+
+# Default save_dir / example output directories
+vae_outputs/
+ddpm_outputs/
+example_outputs/
+
+# Checkpoints and generated figures
+*.pt
+*.png
+
+# macOS
+.DS_Store

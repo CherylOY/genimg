@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gen"
+version = "0.1.0"
+description = "A small library for generative image models (VAE and DDPM) on MNIST-style data."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "matplotlib>=3.5",
+]
+
+[project.optional-dependencies]
+# Only needed for DDPM.compute_fid. torchmetrics supplies the FID metric and
+# torch-fidelity the Inception feature extractor it defaults to.
+fid = ["torchmetrics>=1.0", "torch-fidelity>=0.3"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["gen*"]
