@@ -19,6 +19,7 @@ implementing ``_build_model`` / ``_build_data`` / ``train`` / ``generate``.
 """
 
 from .base import BaseModel, REBUILD_MODEL, REBUILD_OPTIM, REBUILD_DATA
+from .data import FolderImages
 from .vae import VAE
 from .ddpm import DDPM
 
@@ -26,6 +27,7 @@ __all__ = [
     "BaseModel",
     "VAE",
     "DDPM",
+    "FolderImages",
     "REBUILD_MODEL",
     "REBUILD_OPTIM",
     "REBUILD_DATA",

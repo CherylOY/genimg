@@ -129,6 +129,39 @@ ddpm = genimg.DDPM(dataset_name="pathmnist", channels=3)
 ddpm = genimg.DDPM(dataset_name="chestmnist", dataset_path="/content/drive/MyDrive/data")
 ```
 
+### A folder of your own images
+
+Large corpora — FFHQ, CelebA-HQ — are not in the table because they cannot be
+fetched programmatically: **you download and unpack them yourself**, then point
+`FolderImages` at the directory. It globs recursively for `.png`, `.jpg`,
+`.jpeg`, `.webp` and `.bmp`, resizes the short side, centre-crops to a square,
+and normalises. torchvision's `ImageFolder` is not a substitute — it expects
+one subdirectory per class, which an unlabelled corpus does not have.
+
+```python
+from genimg import DDPM, FolderImages
+
+ddpm = DDPM(arch="attention", channels=3, image_size=128,
+            base_channels=64, time_emb_dim=256,
+            attn_resolutions=(16, 8), timesteps=1000, beta_end=0.02, lr=2e-4)
+
+ddpm.set_dataset(FolderImages(
+    "~/data/ffhq/thumbnails128x128",   # whatever you unpacked it to
+    image_size=128,
+    max_images=5000,                   # a subset, for a first run
+    seed=0,                            # reproducible subset
+))
+ddpm.train()
+```
+
+`pixel_range` defaults to `(-1, 1)` for the DDPM; pass `(0.0, 1.0)` for the
+VAE. `channels=1` reads the images as greyscale. A directory with no images
+raises rather than yielding an empty dataset, and `set_dataset` reports any
+disagreement with the model's `channels` / `image_size`.
+
+At 128px use `arch="attention"` — `SmallUNet` pools only twice, nowhere near
+enough receptive field for a whole face.
+
 ## Package layout
 
 ```
