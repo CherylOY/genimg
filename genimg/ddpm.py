@@ -22,9 +22,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from torchvision import transforms
-from torchvision.datasets import MNIST
 
 from .base import BaseModel, REBUILD_MODEL, REBUILD_OPTIM, REBUILD_DATA, SchemaEntry
 from .nn.unet import SmallUNet, UNet
@@ -75,6 +72,7 @@ class DDPM(BaseModel):
 
     _DEFAULTS: Dict[str, Any] = {
         "dataset_path": "~/datasets",
+        "dataset_name": "mnist",
         "batch_size": 128,
         "num_workers": 1,
         "epochs": 50,
@@ -208,22 +206,16 @@ class DDPM(BaseModel):
         self._stale.discard(REBUILD_MODEL)
         self._stale.add(REBUILD_OPTIM)
 
-    def _build_data(self) -> None:
-        # Use a caller-supplied dataset if one was registered via set_dataset();
-        # otherwise fall back to MNIST (rescaled to [-1, 1]).
-        dataset = self._custom_dataset
-        if dataset is None:
-            tf = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Lambda(lambda t: t * 2 - 1),   # [0,1] -> [-1,1]
-            ])
-            dataset = MNIST(self._config["dataset_path"], train=True,
-                            download=True, transform=tf)
-        self._train_loader = DataLoader(
-            dataset, batch_size=self._config["batch_size"], shuffle=True,
-            num_workers=self._config["num_workers"],
-            pin_memory=(self._config["device"] == "cuda"))
-        self._stale.discard(REBUILD_DATA)
+    def _check_dataset_shape(self, shape) -> None:
+        """The U-Net's first conv fixes the channel count, and the sampler draws
+        noise at image_size -- a mismatch is a shape error at the first batch."""
+        want = (self._config["channels"],
+                self._config["image_size"], self._config["image_size"])
+        if tuple(shape) != want:
+            warnings.warn(
+                f"dataset items are {tuple(shape)} but the model is configured "
+                f"for {want}; set channels={shape[0]} and image_size={shape[-1]}",
+                stacklevel=4)
 
     # Persist the cached schedule buffers alongside the checkpoint.
     def _extra_state(self) -> Dict[str, Any]:

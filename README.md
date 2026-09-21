@@ -26,7 +26,11 @@ vae.train()
 imgs = vae.generate(16)                 # (16, 784) in [0, 1]
 vae.show_reconstruction(n=8)
 
-# --- VAE on your own data ---
+# --- a different built-in dataset, by name ---
+ddpm = genimg.DDPM(dataset_name="chestmnist")   # needs: pip install medmnist
+ddpm.train()
+
+# --- your own data ---
 vae = genimg.VAE(x_dim=64 * 64, latent_dim=128)
 vae.set_dataset(my_dataset)             # items: (image_tensor in [0,1], label)
 vae.train()
@@ -75,6 +79,7 @@ Trainer + sampler for a denoising diffusion model. Two architectures via `arch`:
 | `timesteps` | 500 | diffusion steps |
 | `beta_start` / `beta_end` | 1e-4 / 0.06 | linear noise schedule |
 | `batch_size` / `num_workers` / `epochs` / `lr` | 128 / 1 / 50 / 1e-3 | training |
+| `dataset_name` | `"mnist"` | built-in dataset, or `"custom"` via `set_dataset` |
 | `dataset_path` / `save_dir` / `device` | — | IO |
 
 Methods: `train` (with gradient clipping), `sample` / `ddim_sample` (both clip
@@ -100,6 +105,29 @@ A dataset passed to `set_dataset` must yield pixels in `[0, 1]` (the decoder
 emits Bernoulli probabilities and the loss is a BCE against them), must match
 `x_dim` once flattened, and needs `x_dim` to be a perfect square for the
 visualisation helpers to reshape it.
+
+## Datasets
+
+`dataset_name` selects a built-in dataset; each model applies the pixel range it
+needs, so the same name works for either one (`[0, 1]` for the VAE, `[-1, 1]`
+for the DDPM).
+
+| source | names |
+|---|---|
+| torchvision | `mnist`, `fashionmnist`, `kmnist` |
+| [MedMNIST](https://medmnist.com) (`pip install medmnist`) | `chestmnist`, `pneumoniamnist`, `octmnist`, `breastmnist`, `tissuemnist`, `organamnist`, `organcmnist`, `organsmnist`, `pathmnist`, `dermamnist`, `retinamnist`, `bloodmnist` |
+| your own | `custom` — set automatically by `set_dataset(...)` |
+
+All of them are 28×28. The last four MedMNIST sets are RGB, so pass
+`channels=3`; a mismatch against the configured `channels` / `image_size` is
+reported when the loader is built. MedMNIST labels are arrays (ChestMNIST is
+multi-label with 14 classes) and are normalised away, since nothing here uses
+them.
+
+```python
+ddpm = genimg.DDPM(dataset_name="pathmnist", channels=3)
+ddpm = genimg.DDPM(dataset_name="chestmnist", dataset_path="/content/drive/MyDrive/data")
+```
 
 ## Package layout
 
@@ -148,8 +176,10 @@ stays on the VAE, since the DDPM has no reconstruction step.
   that only DDIM has (`ddim_steps`, `eta`) instead of forwarding them to
   `sample()`; these also reach `generate` from `show_samples` / `plot_samples`.
 * `set_dataset` takes one look at the first item and warns if its pixel range
-  does not match what the model expects. Feeding `[0, 1]` images to the DDPM
-  otherwise trains perfectly happily and just produces washed-out samples.
+  or shape does not match what the model expects. Feeding `[0, 1]` images to
+  the DDPM otherwise trains perfectly happily and just produces washed-out
+  samples. It also flips `dataset_name` to `"custom"`, so a saved config still
+  describes where the data came from.
 * `arch="attention"` warns when `attn_resolutions` matches none of the
   resolutions the network actually visits — at the default 28px it walks
   28/14/7/3, so the default `(16, 8)` would leave attention on at the

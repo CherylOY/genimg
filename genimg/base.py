@@ -24,18 +24,80 @@ A subclass is expected to:
 
 from __future__ import annotations
 
+import os
 import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import torch
 from torch.optim import Adam
+from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms
 
 # Rebuildable-component tags. Subclasses may add their own (e.g. the DDPM
 # adds a "schedule" tag) but these three are understood by the base class.
 REBUILD_MODEL = "model"
 REBUILD_OPTIM = "optim"
 REBUILD_DATA = "data"
+
+# Built-in datasets, selected by name through config["dataset_name"]. The key
+# is what callers type; the value is the class to pull out of the providing
+# package. Everything here is MNIST-shaped (28x28) unless noted.
+TORCHVISION_DATASETS = {
+    "mnist":        "MNIST",
+    "fashionmnist": "FashionMNIST",
+    "kmnist":       "KMNIST",
+}
+MEDMNIST_DATASETS = {
+    "chestmnist":     "ChestMNIST",
+    "pneumoniamnist": "PneumoniaMNIST",
+    "octmnist":       "OCTMNIST",
+    "breastmnist":    "BreastMNIST",
+    "tissuemnist":    "TissueMNIST",
+    "organamnist":    "OrganAMNIST",
+    "organcmnist":    "OrganCMNIST",
+    "organsmnist":    "OrganSMNIST",
+    "pathmnist":      "PathMNIST",      # 3-channel -- set channels=3
+    "dermamnist":     "DermaMNIST",     # 3-channel
+    "retinamnist":    "RetinaMNIST",    # 3-channel
+    "bloodmnist":     "BloodMNIST",     # 3-channel
+}
+# "custom" means "whatever set_dataset() registered".
+SUPPORTED_DATASETS = (set(TORCHVISION_DATASETS)
+                      | set(MEDMNIST_DATASETS)
+                      | {"custom"})
+
+
+class _Rescale:
+    """Map [0, 1] to [lo, hi].
+
+    A module-level class rather than a lambda so the transform can be pickled
+    to DataLoader workers, which spawn-based platforms (macOS, Windows) need.
+    """
+
+    def __init__(self, lo: float, hi: float) -> None:
+        self.lo, self.span = lo, hi - lo
+
+    def __call__(self, t: torch.Tensor) -> torch.Tensor:
+        return t * self.span + self.lo
+
+
+class _ImagesOnly(Dataset):
+    """Wrap a dataset whose label is not a plain scalar.
+
+    The MedMNIST sets return a numpy array per item -- length 14 for the
+    multi-label ChestMNIST. Nothing here uses labels, so they are replaced with
+    0 and every dataset unpacks the same way.
+    """
+
+    def __init__(self, ds: Any) -> None:
+        self.ds = ds
+
+    def __len__(self) -> int:
+        return len(self.ds)
+
+    def __getitem__(self, i: int):
+        return self.ds[i][0], 0
 
 # Type of a single schema row: (expected_type, validator, affected_tags), plus
 # an optional 4th element -- a plain-English statement of what the validator
@@ -54,6 +116,8 @@ class BaseModel(ABC):
     # every model and can be reused via ``{**BaseModel._BASE_SCHEMA, ...}``.
     _BASE_SCHEMA: Dict[str, SchemaEntry] = {
         "dataset_path": (str, lambda v: len(v) > 0, (REBUILD_DATA,)),
+        "dataset_name": (str, lambda v: v.lower() in SUPPORTED_DATASETS, (REBUILD_DATA,),
+                         f"must be one of {sorted(SUPPORTED_DATASETS)}"),
         "batch_size":   (int, lambda v: v > 0,      (REBUILD_DATA,)),
         "num_workers":  (int, lambda v: v >= 0,     (REBUILD_DATA,)),
         "epochs":       (int, lambda v: v > 0,      ()),
@@ -161,10 +225,63 @@ class BaseModel(ABC):
         self._optimizer = Adam(self._model.parameters(), lr=self._config["lr"])
         self._stale.discard(REBUILD_OPTIM)
 
-    @abstractmethod
+    def _default_transform(self):
+        """ToTensor, then rescale into ``_DATA_RANGE``.
+
+        ToTensor already yields [0, 1], so a model that wants that range gets
+        no extra step and a model that wants [-1, 1] gets one multiply-add.
+        """
+        lo, hi = self._DATA_RANGE
+        steps = [transforms.ToTensor()]
+        if (lo, hi) != (0.0, 1.0):
+            steps.append(_Rescale(lo, hi))
+        return transforms.Compose(steps)
+
+    def _resolve_dataset(self) -> Any:
+        """Return the dataset named by ``config["dataset_name"]``."""
+        name = self._config["dataset_name"].lower()
+
+        if name == "custom":
+            if self._custom_dataset is None:
+                raise RuntimeError(
+                    "dataset_name='custom' but no dataset was registered. "
+                    "Call set_dataset(my_dataset) first, or set dataset_name "
+                    f"to one of {sorted(SUPPORTED_DATASETS - {'custom'})}.")
+            return self._custom_dataset
+
+        root = os.path.expanduser(self._config["dataset_path"])
+        transform = self._default_transform()
+
+        if name in TORCHVISION_DATASETS:
+            from torchvision import datasets as tv_datasets
+            cls = getattr(tv_datasets, TORCHVISION_DATASETS[name])
+            return cls(root=root, train=True, download=True, transform=transform)
+
+        try:
+            import medmnist
+        except ImportError as e:
+            raise ImportError(
+                f"dataset_name={name!r} needs the medmnist package. "
+                f"Install: pip install medmnist") from e
+        # medmnist will not create `root` itself -- it raises "Failed to setup
+        # the default `root` directory" if the folder is not already there.
+        os.makedirs(root, exist_ok=True)
+        cls = getattr(medmnist, MEDMNIST_DATASETS[name])
+        return _ImagesOnly(cls(split="train", transform=transform,
+                               download=True, root=root))
+
     def _build_data(self) -> None:
-        """Build the data loader(s) from ``self._custom_dataset`` -- or, when
-        that is None, from the model's own dataset -- and clear REBUILD_DATA."""
+        """Build the training loader from whichever dataset is selected."""
+        dataset = self._resolve_dataset()
+        self._check_dataset(dataset)
+        self._train_loader = DataLoader(
+            dataset,
+            batch_size=self._config["batch_size"],
+            shuffle=True,
+            num_workers=self._config["num_workers"],
+            pin_memory=(self._config["device"] == "cuda"),
+        )
+        self._stale.discard(REBUILD_DATA)
 
     def set_dataset(self, dataset: Any) -> None:
         """Train on a caller-supplied dataset instead of the built-in MNIST.
@@ -178,25 +295,30 @@ class BaseModel(ABC):
         Marks the data loader stale, so the next ``build`` rebuilds it.
         """
         self._custom_dataset = dataset
+        # Keep dataset_name honest about where the data now comes from, so
+        # config snapshots (hp_search, save/load, repr) describe reality.
+        self.set("dataset_name",
+                 self._DEFAULTS["dataset_name"] if dataset is None else "custom")
         self._stale.add(REBUILD_DATA)
         if dataset is not None:
-            self._warn_on_pixel_range(dataset)
+            self._check_dataset(dataset)
 
-    def _warn_on_pixel_range(self, dataset: Any) -> None:
-        """Warn when the first item does not look like ``_DATA_RANGE``.
+    def _check_dataset(self, dataset: Any) -> None:
+        """Warn when the first item does not match what this model expects.
 
         Handing [0, 1] images to the DDPM (which wants [-1, 1]) trains happily
         and just produces washed-out samples, so nothing would ever raise --
         one cheap look at one item is the only warning anyone gets. Advisory
         only: a dataset that genuinely occupies an unusual range is fine.
         """
-        lo, hi = self._DATA_RANGE
         try:
             x = dataset[0][0]
             seen_lo, seen_hi = float(x.min()), float(x.max())
+            shape = tuple(x.shape)
         except Exception:
             return          # not indexable, or not tensors: nothing to check
 
+        lo, hi = self._DATA_RANGE
         tol = 0.05 * (hi - lo)
         outside = seen_lo < lo - tol or seen_hi > hi + tol
         # A signed range whose data never goes negative is the classic mix-up.
@@ -210,6 +332,12 @@ class BaseModel(ABC):
                 f"[{seen_lo:.3g}, {seen_hi:.3g}]. {fix}",
                 stacklevel=3,
             )
+
+        self._check_dataset_shape(shape)
+
+    def _check_dataset_shape(self, shape: Tuple[int, ...]) -> None:
+        """Compare one item's shape against the config. Overridden per model,
+        since the VAE trains on flattened vectors and the DDPM on images."""
 
     # Maps a component tag to its builder. Subclasses extend this dict.
     def _builders(self) -> Dict[str, Callable[[], None]]:

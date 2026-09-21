@@ -7,13 +7,11 @@ is inherited from :class:`genimg.base.BaseModel`.
 from __future__ import annotations
 
 import os
+import warnings
 from typing import Any, Dict, Optional
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from torchvision import transforms
-from torchvision.datasets import MNIST
 
 from .base import BaseModel, REBUILD_MODEL, REBUILD_OPTIM, REBUILD_DATA, SchemaEntry
 from .nn.vae_modules import Encoder, Decoder, VAENet
@@ -40,6 +38,7 @@ class VAE(BaseModel):
 
     _DEFAULTS: Dict[str, Any] = {
         "dataset_path": "~/datasets",
+        "dataset_name": "mnist",
         "batch_size": 100,
         "num_workers": 1,
         "epochs": 30,
@@ -63,22 +62,23 @@ class VAE(BaseModel):
         self._stale.discard(REBUILD_MODEL)
         self._stale.add(REBUILD_OPTIM)        # fresh model -> fresh optimizer
 
-    def _build_data(self) -> None:
-        # Use a caller-supplied dataset if one was registered via set_dataset();
-        # otherwise fall back to MNIST. Either way the pixels must be in [0, 1]:
-        # the decoder emits Bernoulli probabilities and the loss is a BCE against
-        # them. A custom dataset also has to match x_dim once flattened, and the
-        # visualisation helpers assume x_dim is a perfect square.
-        train = self._custom_dataset
-        if train is None:
-            tf = transforms.Compose([transforms.ToTensor()])
-            train = MNIST(self._config["dataset_path"], train=True,
-                          download=True, transform=tf)
-        self._train_loader = DataLoader(
-            train, batch_size=self._config["batch_size"], shuffle=True,
-            num_workers=self._config["num_workers"],
-            pin_memory=(self._config["device"] == "cuda"))
-        self._stale.discard(REBUILD_DATA)
+    def _check_dataset_shape(self, shape) -> None:
+        """train() flattens each item, so only the total element count matters --
+        but the visualisation helpers reshape it back to a square."""
+        n = 1
+        for d in shape:
+            n *= d
+        if n != self._config["x_dim"]:
+            warnings.warn(
+                f"dataset items flatten to {n} values but x_dim={self._config['x_dim']}; "
+                f"set x_dim={n} (the first Linear layer will not accept this otherwise)",
+                stacklevel=4)
+        side = int(self._config["x_dim"] ** 0.5)
+        if side * side != self._config["x_dim"]:
+            warnings.warn(
+                f"x_dim={self._config['x_dim']} is not a perfect square, so "
+                f"show_samples / plot_samples / show_reconstruction cannot "
+                f"reshape the output into an image", stacklevel=4)
 
     # ------------------------------------------------------------------ #
     # VAE-specific public API
