@@ -20,6 +20,9 @@ dependencies = [
 # torch-fidelity the Inception feature extractor it defaults to.
 fid = ["torchmetrics>=1.0", "torch-fidelity>=0.3"]
 
+[project.urls]
+Repository = "https://github.com/CherylOY/genimg"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["genimg*"]

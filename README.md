@@ -142,9 +142,18 @@ stays on the VAE, since the DDPM has no reconstruction step.
 * Single-key constraints are enforced by `set()`; combinations that only make
   sense together (`num_heads` vs `base_channels`, `channel_mults` depth vs
   `image_size`) are checked by `build()` before anything is constructed.
-* `generate(n, use_ddim=False)` rejects DDIM-only options (`ddim_steps`,
-  `eta`, `seed`) rather than forwarding them to `sample()`; these also reach
-  `generate` from `show_samples` / `plot_samples`.
+* Both samplers take `seed`, which seeds a private `torch.Generator` rather
+  than calling `torch.manual_seed` — sampling never disturbs the RNG of the
+  code that called it. `generate(n, use_ddim=False)` still rejects the options
+  that only DDIM has (`ddim_steps`, `eta`) instead of forwarding them to
+  `sample()`; these also reach `generate` from `show_samples` / `plot_samples`.
+* `set_dataset` takes one look at the first item and warns if its pixel range
+  does not match what the model expects. Feeding `[0, 1]` images to the DDPM
+  otherwise trains perfectly happily and just produces washed-out samples.
+* `arch="attention"` warns when `attn_resolutions` matches none of the
+  resolutions the network actually visits — at the default 28px it walks
+  28/14/7/3, so the default `(16, 8)` would leave attention on at the
+  bottleneck only.
 * `compute_fid` needs the `fid` extra: `pip install -e '.[fid]'`.
 * `compute_fid` estimates a `feature`x`feature` covariance per image set, so
   `n_samples` must exceed `feature` for the score to mean anything. The

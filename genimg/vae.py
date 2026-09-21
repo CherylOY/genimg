@@ -35,6 +35,9 @@ class VAE(BaseModel):
         "latent_dim": (int, lambda v: v > 0, (REBUILD_MODEL,)),
     }
 
+    # The decoder emits Bernoulli probabilities and the loss is a BCE.
+    _DATA_RANGE = (0.0, 1.0)
+
     _DEFAULTS: Dict[str, Any] = {
         "dataset_path": "~/datasets",
         "batch_size": 100,

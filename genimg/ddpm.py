@@ -70,6 +70,9 @@ class DDPM(BaseModel):
                        (REBUILD_MODEL, REBUILD_OPTIM, REBUILD_SCHEDULE)),
     }
 
+    # The sampler ends on (x + 1) / 2, so training data lives in [-1, 1].
+    _DATA_RANGE = (-1.0, 1.0)
+
     _DEFAULTS: Dict[str, Any] = {
         "dataset_path": "~/datasets",
         "batch_size": 128,
@@ -101,6 +104,14 @@ class DDPM(BaseModel):
     # Cross-key validation (a _SCHEMA validator only sees one value at a time)
     # ------------------------------------------------------------------ #
     def _validate_config(self) -> None:
+        # The forward process has to add noise as t grows, so betas must rise.
+        beta_start, beta_end = self._config["beta_start"], self._config["beta_end"]
+        if beta_start >= beta_end:
+            raise ValueError(
+                f"beta_start={beta_start} must be smaller than beta_end={beta_end}: "
+                f"the schedule interpolates from beta_start up to beta_end, and a "
+                f"flat or descending one leaves the data under-noised at t=T")
+
         size = self._config["image_size"]
 
         if self._config["arch"] == "small":
@@ -134,6 +145,19 @@ class DDPM(BaseModel):
             raise ValueError(
                 f"num_heads={heads} must divide base_channels={base}: the "
                 f"attention blocks split each level's channels across the heads")
+
+        # Attention is inserted only where a level's resolution is listed, so a
+        # non-matching list quietly yields a plain conv U-Net plus the
+        # bottleneck -- the kind of thing you discover after a day of training.
+        attn_res = tuple(self._config["attn_resolutions"])
+        if attn_res:
+            visited = [size // (2 ** i) for i in range(len(mults))]
+            if not set(attn_res) & set(visited):
+                warnings.warn(
+                    f"attn_resolutions={attn_res} matches none of the resolutions "
+                    f"this network visits ({visited}), so self-attention is applied "
+                    f"at the bottleneck only. Pick values from {visited}, or pass "
+                    f"attn_resolutions=() to say you meant that.")
 
     # ------------------------------------------------------------------ #
     # Component construction (model-specific bits only)
@@ -214,6 +238,20 @@ class DDPM(BaseModel):
     # Diffusion math (private helpers)
     # ------------------------------------------------------------------ #
     @staticmethod
+    def _generator(seed: Optional[int], device: torch.device) -> Optional[torch.Generator]:
+        """A private RNG for a seeded draw, or None to use the global stream.
+
+        Seeding locally rather than calling ``torch.manual_seed`` keeps the
+        caller's own random stream intact: a sampler has no business resetting
+        the RNG of the training loop that called it.
+        """
+        if seed is None:
+            return None
+        g = torch.Generator(device=device)
+        g.manual_seed(seed)
+        return g
+
+    @staticmethod
     def _extract(a: torch.Tensor, t: torch.Tensor, x_shape: tuple) -> torch.Tensor:
         out = a.gather(0, t)
         return out.reshape(t.shape[0], *((1,) * (len(x_shape) - 1)))
@@ -234,7 +272,8 @@ class DDPM(BaseModel):
 
     @torch.no_grad()
     def _p_sample(self, x: torch.Tensor, t: torch.Tensor,
-                  clip_denoised: bool = True) -> torch.Tensor:
+                  clip_denoised: bool = True,
+                  generator: Optional[torch.Generator] = None) -> torch.Tensor:
         predicted_noise = self._model(x, t)
         # Reconstruct x0, optionally clip to [-1, 1] to avoid over-exposure.
         sqrt_recip_ab   = self._extract(self._schedule["sqrt_recip_alpha_bars"],   t, x.shape)
@@ -248,7 +287,10 @@ class DDPM(BaseModel):
         model_mean = coef1 * x0 + coef2 * x
 
         post_var_t   = self._extract(self._schedule["posterior_variance"], t, x.shape)
-        noise        = torch.randn_like(x)
+        # torch.randn rather than randn_like: only the former takes a generator
+        # across the whole torch>=2.0 range this package supports.
+        noise        = torch.randn(x.shape, dtype=x.dtype, device=x.device,
+                                   generator=generator)
         nonzero_mask = (t != 0).float().reshape(x.shape[0], *((1,) * (len(x.shape) - 1)))
         return model_mean + nonzero_mask * torch.sqrt(torch.clamp(post_var_t, min=1e-20)) * noise
 
@@ -294,8 +336,13 @@ class DDPM(BaseModel):
         return epoch_losses
 
     @torch.no_grad()
-    def sample(self, n: int = 16, clip_denoised: bool = True) -> torch.Tensor:
-        """Full DDPM ancestral sampling over all timesteps. Returns [0,1] images."""
+    def sample(self, n: int = 16, clip_denoised: bool = True,
+               seed: Optional[int] = None) -> torch.Tensor:
+        """Full DDPM ancestral sampling over all timesteps. Returns [0,1] images.
+
+        ``seed`` makes the draw reproducible without disturbing the caller's
+        global RNG -- see :meth:`_generator`.
+        """
         self.build(skip=(REBUILD_DATA,))
         self._model.eval()
         device = self._device()
@@ -303,15 +350,21 @@ class DDPM(BaseModel):
         H = W = self._config["image_size"]
         T = self._config["timesteps"]
 
-        x = torch.randn((n, C, H, W), device=device)
+        g = self._generator(seed, device)
+        x = torch.randn((n, C, H, W), device=device, generator=g)
         for i in reversed(range(T)):
             t = torch.full((n,), i, device=device, dtype=torch.long)
-            x = self._p_sample(x, t, clip_denoised=clip_denoised)
+            x = self._p_sample(x, t, clip_denoised=clip_denoised, generator=g)
         x = (x + 1) / 2
         return torch.clamp(x, 0, 1)
 
     def _ddim_timesteps(self, ddim_steps: int) -> list:
         T = self._config["timesteps"]
+        # linspace with a single point returns its start, so the general branch
+        # would hand back [0] and "denoise" a pure-noise image from t=0. One
+        # step means one jump from the noisiest step straight to the image.
+        if ddim_steps == 1:
+            return [T - 1]
         idx = torch.linspace(0, T - 1, ddim_steps).round().long()
         idx = torch.unique(idx)
         return idx.flip(0).tolist()
@@ -333,12 +386,10 @@ class DDPM(BaseModel):
         C = self._config["channels"]
         H = W = self._config["image_size"]
 
-        if seed is not None:
-            torch.manual_seed(seed)
-
+        g = self._generator(seed, device)
         alpha_bars = self._schedule["alpha_bars"]
         times = self._ddim_timesteps(min(ddim_steps, T))
-        x = torch.randn((n, C, H, W), device=device)
+        x = torch.randn((n, C, H, W), device=device, generator=g)
 
         for i, tau in enumerate(times):
             t    = torch.full((n,), int(tau), device=device, dtype=torch.long)
@@ -359,7 +410,8 @@ class DDPM(BaseModel):
             sigma = eta * torch.sqrt(
                 (1.0 - ab_prev) / (1.0 - ab_t) * (1.0 - ab_t / ab_prev))
             dir_xt = torch.sqrt(torch.clamp(1.0 - ab_prev - sigma ** 2, min=0.0)) * predicted_noise
-            noise = torch.randn_like(x) if eta > 0 else torch.zeros_like(x)
+            noise = (torch.randn(x.shape, dtype=x.dtype, device=x.device, generator=g)
+                     if eta > 0 else torch.zeros_like(x))
             x = torch.sqrt(ab_prev) * x0 + dir_xt + sigma * noise
 
         x = (x + 1) / 2
@@ -367,7 +419,7 @@ class DDPM(BaseModel):
 
     # Sampler options that only ddim_sample() understands. sample() takes none
     # of them, so without this check they reach it as an unexpected keyword.
-    _DDIM_ONLY_KWARGS = ("ddim_steps", "eta", "seed")
+    _DDIM_ONLY_KWARGS = ("ddim_steps", "eta")
 
     # Unify the entry point: generate() delegates to the chosen sampler.
     # ``kwargs`` also arrives here from the inherited show_samples() /
@@ -620,9 +672,7 @@ class DDPM(BaseModel):
             gen = self.generate(n, use_ddim=True, ddim_steps=ddim_steps,
                                 eta=eta, seed=seed).cpu()
         else:
-            if seed is not None:
-                torch.manual_seed(seed)
-            gen = self.generate(n).cpu()
+            gen = self.generate(n, seed=seed).cpu()
 
         train = torch.stack([(dataset[i][0] + 1) / 2 for i in range(N)])  # -> [0,1]
 

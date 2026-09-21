@@ -24,6 +24,7 @@ A subclass is expected to:
 
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
@@ -64,6 +65,10 @@ class BaseModel(ABC):
 
     _SCHEMA: Dict[str, SchemaEntry] = {}
     _DEFAULTS: Dict[str, Any] = {}
+
+    # Pixel range a caller-supplied dataset is expected to already be in.
+    # Subclasses set it to whatever their loss and sampler assume.
+    _DATA_RANGE: Tuple[float, float] = (0.0, 1.0)
 
     # The set of component tags this model knows how to (re)build, in build
     # order. Subclasses that add components prepend/append their own tags.
@@ -111,6 +116,10 @@ class BaseModel(ABC):
             value = float(value)
         if expected_type is tuple and isinstance(value, list):
             value = tuple(value)      # accept a list where a tuple is expected
+        # bool subclasses int, so isinstance(True, int) passes and a stray True
+        # would quietly become batch_size=1.
+        if expected_type is int and isinstance(value, bool):
+            raise TypeError(f"config {key!r} expected int, got bool ({value!r})")
         if not isinstance(value, expected_type):
             raise TypeError(
                 f"config {key!r} expected {expected_type.__name__}, "
@@ -170,6 +179,37 @@ class BaseModel(ABC):
         """
         self._custom_dataset = dataset
         self._stale.add(REBUILD_DATA)
+        if dataset is not None:
+            self._warn_on_pixel_range(dataset)
+
+    def _warn_on_pixel_range(self, dataset: Any) -> None:
+        """Warn when the first item does not look like ``_DATA_RANGE``.
+
+        Handing [0, 1] images to the DDPM (which wants [-1, 1]) trains happily
+        and just produces washed-out samples, so nothing would ever raise --
+        one cheap look at one item is the only warning anyone gets. Advisory
+        only: a dataset that genuinely occupies an unusual range is fine.
+        """
+        lo, hi = self._DATA_RANGE
+        try:
+            x = dataset[0][0]
+            seen_lo, seen_hi = float(x.min()), float(x.max())
+        except Exception:
+            return          # not indexable, or not tensors: nothing to check
+
+        tol = 0.05 * (hi - lo)
+        outside = seen_lo < lo - tol or seen_hi > hi + tol
+        # A signed range whose data never goes negative is the classic mix-up.
+        unsigned = lo < 0 <= seen_lo
+        if outside or unsigned:
+            fix = ("Rescale it with `x * 2 - 1`." if unsigned
+                   else "Check the dataset's transform.")
+            warnings.warn(
+                f"{type(self).__name__} expects dataset images in "
+                f"[{lo:g}, {hi:g}], but the first item spans "
+                f"[{seen_lo:.3g}, {seen_hi:.3g}]. {fix}",
+                stacklevel=3,
+            )
 
     # Maps a component tag to its builder. Subclasses extend this dict.
     def _builders(self) -> Dict[str, Callable[[], None]]:
