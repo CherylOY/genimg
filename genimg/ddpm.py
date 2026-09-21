@@ -1,4 +1,4 @@
-"""Denoising diffusion probabilistic model for the ``gen`` library.
+"""Denoising diffusion probabilistic model for the ``genimg`` library.
 
 The DDPM adds one component the base class does not know about — a precomputed
 noise schedule — so it declares an extra ``REBUILD_SCHEDULE`` tag, registers a
@@ -35,7 +35,7 @@ REBUILD_SCHEDULE = "schedule"
 class DDPM(BaseModel):
     """Trainer + sampler for a denoising diffusion probabilistic model.
 
-    >>> ddpm = gen.DDPM(timesteps=500)
+    >>> ddpm = genimg.DDPM(timesteps=500)
     >>> ddpm.train()
     >>> imgs = ddpm.sample(16)
     """
@@ -417,7 +417,7 @@ class DDPM(BaseModel):
         except ImportError as e:
             raise ImportError(
                 "FID needs torchmetrics and the torch-fidelity Inception feature "
-                "extractor. Install: pip install 'gen[fid]'") from e
+                "extractor. Install: pip install 'genimg[fid]'") from e
 
         self.build()
         self._model.eval()

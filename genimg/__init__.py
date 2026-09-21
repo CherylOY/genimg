@@ -2,18 +2,18 @@
 
 Public API
 ----------
-    import gen
+    import genimg
 
-    vae = gen.VAE(latent_dim=64, epochs=50)
+    vae = genimg.VAE(latent_dim=64, epochs=50)
     vae.train()
     imgs = vae.generate(16)
 
-    ddpm = gen.DDPM(timesteps=500)
+    ddpm = genimg.DDPM(timesteps=500)
     ddpm.train()
     imgs = ddpm.sample(16)
 
 Both models expose the same configuration-driven interface inherited from
-``gen.BaseModel`` (``get`` / ``set`` / ``set_config`` / ``build`` / ``save``
+``genimg.BaseModel`` (``get`` / ``set`` / ``set_config`` / ``build`` / ``save``
 / ``load``), so a third model can be added by subclassing ``BaseModel`` and
 implementing ``_build_model`` / ``_build_data`` / ``train`` / ``generate``.
 """

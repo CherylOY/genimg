@@ -1,8 +1,8 @@
 # gen
 
 A small library packaging the two generative models from this project — a
-variational autoencoder (`gen.VAE`) and a denoising diffusion probabilistic
-model (`gen.DDPM`) — behind one consistent, configuration-driven interface.
+variational autoencoder (`genimg.VAE`) and a denoising diffusion probabilistic
+model (`genimg.DDPM`) — behind one consistent, configuration-driven interface.
 
 The model code is ported from the tutorial repositories (`Pytorch-DDPM-tutorial`,
 `Pytorch-VAE-tutorial`): `SmallUNet` / `UNet` from `model.py`, the VAE
@@ -18,27 +18,27 @@ pip install -e .            # from the project root
 ## Usage
 
 ```python
-import gen
+import genimg
 
 # --- VAE (MNIST) ---
-vae = gen.VAE(latent_dim=64, epochs=50)
+vae = genimg.VAE(latent_dim=64, epochs=50)
 vae.train()
 imgs = vae.generate(16)                 # (16, 784) in [0, 1]
 vae.show_reconstruction(n=8)
 
 # --- VAE on your own data ---
-vae = gen.VAE(x_dim=64 * 64, latent_dim=128)
+vae = genimg.VAE(x_dim=64 * 64, latent_dim=128)
 vae.set_dataset(my_dataset)             # items: (image_tensor in [0,1], label)
 vae.train()
 
 # --- DDPM (MNIST, default) ---
-ddpm = gen.DDPM(timesteps=500)
+ddpm = genimg.DDPM(timesteps=500)
 ddpm.train()
 imgs = ddpm.sample(16)                   # full ancestral sampling
 fast = ddpm.ddim_sample(16, ddim_steps=50, seed=0)   # faster, reproducible
 
 # --- DDPM on RGB with the attention U-Net (e.g. 128px faces) ---
-ddpm = gen.DDPM(
+ddpm = genimg.DDPM(
     arch="attention", channels=3, image_size=128,
     base_channels=64, channel_mults=(1, 2, 4, 8),
     attn_resolutions=(16, 8), num_heads=4, time_emb_dim=256,
@@ -57,7 +57,7 @@ validated configuration, `set_dataset` to swap in your own data, lazy `build`,
 
 ## Models & configuration
 
-### `gen.DDPM`
+### `genimg.DDPM`
 
 Trainer + sampler for a denoising diffusion model. Two architectures via `arch`:
 
@@ -84,7 +84,7 @@ through), `set_dataset`, `hp_search` / `tune_configs` (FID-ranked search), and
 `show_nearest_train` (nuclear- or L2-distance nearest-training-image
 memorization check).
 
-### `gen.VAE`
+### `genimg.VAE`
 
 Trainer + generator for a fully connected VAE (BCE + KL, `-ELBO` objective).
 
@@ -104,11 +104,11 @@ visualisation helpers to reshape it.
 ## Package layout
 
 ```
-gen_library/
+genimg/
 ├── pyproject.toml          # pip-installable metadata
 ├── README.md
-└── gen/
-    ├── __init__.py         # public API: gen.VAE, gen.DDPM, gen.BaseModel
+└── genimg/
+    ├── __init__.py         # public API: genimg.VAE, genimg.DDPM, genimg.BaseModel
     ├── base.py             # BaseModel: config/schema/staleness/build/save/load + plots
     ├── vae.py              # VAE(BaseModel)
     ├── ddpm.py             # DDPM(BaseModel) — adds the noise-schedule component

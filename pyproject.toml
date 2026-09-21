@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gen"
+name = "genimg"
 version = "0.1.0"
 description = "A small library for generative image models (VAE and DDPM) on MNIST-style data."
 readme = "README.md"
@@ -22,4 +22,4 @@ fid = ["torchmetrics>=1.0", "torch-fidelity>=0.3"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["gen*"]
+include = ["genimg*"]

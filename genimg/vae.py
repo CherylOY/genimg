@@ -1,7 +1,7 @@
-"""Variational autoencoder model for the ``gen`` library.
+"""Variational autoencoder model for the ``genimg`` library.
 
 Only VAE-specific code lives here; all of the config / build / save plumbing
-is inherited from :class:`gen.base.BaseModel`.
+is inherited from :class:`genimg.base.BaseModel`.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from .nn.vae_modules import Encoder, Decoder, VAENet
 class VAE(BaseModel):
     """Trainer + generator for a variational autoencoder.
 
-    >>> vae = gen.VAE(latent_dim=64, epochs=50)
+    >>> vae = genimg.VAE(latent_dim=64, epochs=50)
     >>> vae.train()
     >>> imgs = vae.generate(16)
     """

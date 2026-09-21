@@ -1,10 +1,10 @@
-"""Shared skeleton for all generative models in the ``gen`` library.
+"""Shared skeleton for all generative models in the ``genimg`` library.
 
 ``BaseModel`` factors out everything the VAE and the DDPM trainers have in
 common: a validated configuration dictionary, a declarative schema, lazy
 ("stale set") component rebuilding, optimizer construction, checkpoint
-save/load, and the visualisation helpers. Concrete models (``gen.VAE``,
-``gen.DDPM``) subclass it and supply only what is genuinely model-specific.
+save/load, and the visualisation helpers. Concrete models (``genimg.VAE``,
+``genimg.DDPM``) subclass it and supply only what is genuinely model-specific.
 
 A subclass is expected to:
 
@@ -161,9 +161,9 @@ class BaseModel(ABC):
         """Train on a caller-supplied dataset instead of the built-in MNIST.
 
         Each item must be ``(image_tensor, label)``, with the image already in
-        the pixel range the model trains on: ``[0, 1]`` for :class:`gen.VAE`
+        the pixel range the model trains on: ``[0, 1]`` for :class:`genimg.VAE`
         (its Bernoulli/BCE reconstruction term needs probabilities) and
-        ``[-1, 1]`` for :class:`gen.DDPM` (its sampler returns to that range).
+        ``[-1, 1]`` for :class:`genimg.DDPM` (its sampler returns to that range).
         Passing ``None`` restores the built-in dataset.
 
         Marks the data loader stale, so the next ``build`` rebuilds it.

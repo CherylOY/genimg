@@ -1,4 +1,4 @@
-"""Runnable examples for the ``gen`` library.
+"""Runnable examples for the ``genimg`` library.
 
 Run from the project root (after ``pip install -e .`` or with the repo on
 PYTHONPATH):
@@ -19,7 +19,7 @@ import os
 
 import torch
 
-import gen
+import genimg
 
 
 def _device(choice: str) -> str:
@@ -34,7 +34,7 @@ def _device(choice: str) -> str:
 
 def run_vae(epochs: int, device: str, outdir: str) -> None:
     print("\n=== VAE on MNIST ===")
-    vae = gen.VAE(latent_dim=64, epochs=epochs, device=device, save_dir=outdir)
+    vae = genimg.VAE(latent_dim=64, epochs=epochs, device=device, save_dir=outdir)
     vae.train()                                    # prints per-epoch -ELBO
 
     # Sample new digits from the prior p(z) = N(0, I).
@@ -50,7 +50,7 @@ def run_vae(epochs: int, device: str, outdir: str) -> None:
 
 def run_ddpm(epochs: int, device: str, outdir: str, attention: bool) -> None:
     print(f"\n=== DDPM on MNIST (arch={'attention' if attention else 'small'}) ===")
-    ddpm = gen.DDPM(
+    ddpm = genimg.DDPM(
         arch="attention" if attention else "small",
         timesteps=200,                             # small for a quick demo
         epochs=epochs,
