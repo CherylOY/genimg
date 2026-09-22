@@ -44,7 +44,11 @@ class DDPM(BaseModel):
         **BaseModel._BASE_SCHEMA,
         "image_size": (int, lambda v: v > 0, (REBUILD_MODEL,)),
         "channels":   (int, lambda v: v > 0, (REBUILD_MODEL,)),
-        "arch":       (str, lambda v: v in ("small", "attention"), (REBUILD_MODEL,)),
+        "arch":       (str, lambda v: v in ("small", "attention"), (REBUILD_MODEL,),
+                       "must be 'small' (SmallUNet: two pooling levels, no attention) "
+                       "or 'attention' (UNet: depth set by channel_mults, with "
+                       "self-attention). Both are U-Nets, so the value names the "
+                       "difference rather than the class"),
         # Network capacity. base_channels / time_emb_dim apply to both archs;
         # channel_mults / attn_resolutions / num_heads only affect "attention".
         "base_channels":    (int, lambda v: v > 0 and v % 8 == 0, (REBUILD_MODEL,),
