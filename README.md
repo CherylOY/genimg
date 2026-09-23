@@ -89,6 +89,12 @@ through), `set_dataset`, `hp_search` / `tune_configs` (FID-ranked search), and
 `show_nearest_train` (nuclear- or L2-distance nearest-training-image
 memorization check).
 
+Both searches take `save_best` (one checkpoint, overwritten whenever a trial
+improves) and `save_trials` (a directory keeping every trial, named after the
+values it used, with each result carrying its `path`). One of them is worth
+using: a search leaves the object holding the *last* trial's weights, not the
+best ones, so the files are the only way back to a particular trial.
+
 ### `genimg.VAE`
 
 Trainer + generator for a fully connected VAE (BCE + KL, `-ELBO` objective).

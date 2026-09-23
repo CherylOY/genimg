@@ -499,11 +499,26 @@ class DDPM(BaseModel):
     # ------------------------------------------------------------------ #
     # Hyperparameter tuning (both routines rank trials by FID)
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _trial_path(directory: str, index: int, params: Dict[str, Any]) -> str:
+        """Checkpoint path for one trial, named after the values it used.
+
+        The parameters go in the filename as well as inside the checkpoint, so
+        a directory of results can be read without opening every file.
+        """
+        parts = []
+        for k, v in params.items():
+            text = "".join(ch for ch in f"{k}={v}" if ch.isalnum() or ch in "=.-_")
+            parts.append(text)
+        slug = "_".join(parts)[:120]
+        return os.path.join(directory, f"trial_{index:02d}_{slug}.pt" if slug
+                            else f"trial_{index:02d}.pt")
     def hp_search(self, search_space: Dict[str, list],
                   epochs_per_trial: Optional[int] = None,
                   fid_n_samples: int = 1000, fid_feature: int = 2048,
                   max_trials: Optional[int] = None, shuffle: bool = False,
                   seed: Optional[int] = None, save_best: Optional[str] = None,
+                  save_trials: Optional[str] = None,
                   verbose: bool = True) -> list:
         """Grid-search the cartesian product of `search_space`, ranking by FID.
 
@@ -511,6 +526,13 @@ class DDPM(BaseModel):
         the trial's values, force a fresh network + optimizer, train from
         scratch for `epochs_per_trial`, and score with compute_fid(). Returns
         a list of {'params', 'fid'} sorted by FID ascending (best first).
+
+        `save_best` keeps a single checkpoint, overwritten whenever a trial
+        improves on the best FID so far. `save_trials` is a directory that
+        instead keeps every trial, named after the values it used; each result
+        then carries the 'path' it was written to. Note that the object itself
+        is left holding the last trial's weights, not the best ones, so these
+        files are the only way back to a particular trial.
         """
         for k, vs in search_space.items():
             if k not in self._SCHEMA:
@@ -523,6 +545,9 @@ class DDPM(BaseModel):
                 self._coerce_and_check(k, v)
         if max_trials is not None and max_trials <= 0:
             raise ValueError(f"max_trials must be > 0 if given, got {max_trials!r}")
+
+        if save_trials is not None:
+            os.makedirs(save_trials, exist_ok=True)
 
         snapshot = self.get_config()
         keys   = list(search_space.keys())
@@ -553,7 +578,13 @@ class DDPM(BaseModel):
             fid = self.compute_fid(n_samples=fid_n_samples, feature=fid_feature)
             if verbose:
                 print(f"[hp_search] trial {i+1} FID = {fid:.4f}")
-            results.append({"params": params, "fid": fid})
+            record = {"params": params, "fid": fid}
+            if save_trials is not None:
+                record["path"] = self._trial_path(save_trials, i, params)
+                self.save(record["path"])
+                if verbose:
+                    print(f"[hp_search] saved trial {i+1} to {record['path']}")
+            results.append(record)
             if fid < best_fid:
                 best_fid = fid
                 if save_best is not None:
@@ -573,12 +604,14 @@ class DDPM(BaseModel):
                      epochs_per_trial: Optional[int] = None,
                      fid_n_samples: int = 1000, fid_feature: int = 2048,
                      save_best: Optional[str] = None,
+                     save_trials: Optional[str] = None,
                      verbose: bool = True) -> list:
         """Train and FID-score an explicit list of configurations.
 
         Like hp_search() but runs only the user-supplied `configs` (a list of
         dicts) rather than expanding a full grid. Same from-scratch guarantee
-        per trial; returns {'params', 'fid'} sorted by FID ascending.
+        per trial, and the same `save_best` / `save_trials` options; returns
+        {'params', 'fid'} sorted by FID ascending.
         """
         if not isinstance(configs, list) or not configs:
             raise ValueError("configs must be a non-empty list of dicts")
@@ -589,6 +622,9 @@ class DDPM(BaseModel):
                 if k not in self._SCHEMA:
                     raise KeyError(f"unknown config key {k!r} in configs[{i}]")
                 self._coerce_and_check(k, cfg[k])
+
+        if save_trials is not None:
+            os.makedirs(save_trials, exist_ok=True)
 
         snapshot = self.get_config()
         if verbose:
@@ -610,7 +646,13 @@ class DDPM(BaseModel):
             fid = self.compute_fid(n_samples=fid_n_samples, feature=fid_feature)
             if verbose:
                 print(f"[tune_configs] trial {i+1} FID = {fid:.4f}")
-            results.append({"params": dict(params), "fid": fid})
+            record = {"params": dict(params), "fid": fid}
+            if save_trials is not None:
+                record["path"] = self._trial_path(save_trials, i, params)
+                self.save(record["path"])
+                if verbose:
+                    print(f"[tune_configs] saved trial {i+1} to {record['path']}")
+            results.append(record)
             if fid < best_fid:
                 best_fid = fid
                 if save_best is not None:
